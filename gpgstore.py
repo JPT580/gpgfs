@@ -18,22 +18,22 @@ class GpgStore(object):
     def put(self, data, path=None, format=FMT_GPG):
         assert format == FMT_GPG
         if not path:
-            path = hexlify(os.urandom(20))
+            path = hexlify(os.urandom(20)).decode('utf-8')
             path = path[:2] + '/' + path[2:]
             encdir = self.encroot + '/' + path[:2]
             if not os.path.exists(encdir):
-                os.mkdir(encdir, 0755)
+                os.mkdir(encdir, 0o755)
         res = self.gpg.encrypt(data, self.keyid, armor=False)
         if not res.ok:
             log.error("encryption failed (keyid %s), %s: %s",
                       self.keyid, res.status, path)
             raise OSError(errno.EIO)
         try:
-            with file(self.encroot + '/' + path + '.tmp', 'w') as fd:
+            with open(self.encroot + '/' + path + '.tmp', 'wb') as fd:
                 fd.write(res.data)
             os.rename(self.encroot + '/' + path + '.tmp',
                       self.encroot + '/' + path)
-        except IOError, err:
+        except IOError as err:
             log.error("write failed: %s: %s", path, str(err))
             raise OSError(err.errno)
         finally:
@@ -45,8 +45,8 @@ class GpgStore(object):
     def get(self, path, format=FMT_GPG):
         assert format == FMT_GPG
         try:
-            data = file(self.encroot + '/' + path).read()
-        except OSError, err:
+            data = open(self.encroot + '/' + path, 'rb').read()
+        except OSError as err:
             log.error("read failed: %s: %s", path, str(err))
             raise
         if not data:
@@ -56,7 +56,7 @@ class GpgStore(object):
             log.error("decryption failed, %s: %s", res.status, path)
             raise OSError(errno.EIO)
         log.debug('decrypted %s' % path)
-        return data
+        return res.data
 
     def delete(self, path):
         os.remove(self.encroot + '/' + path)

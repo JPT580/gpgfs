@@ -8,12 +8,12 @@ import sys
 import logging
 import struct
 import time
-from cStringIO import StringIO
+from io import BytesIO
 import gpgstore
 from contextlib import contextmanager
 from threading import Lock
 
-magic = 'GPGFS1\n'
+magic = b'GPGFS1\n'
 
 log = logging.getLogger('gpgfs')
 
@@ -22,30 +22,31 @@ class Entry:
     Filesystem object, either file or directory.
     '''
     def __init__(self, **kwargs):
-        for k,v in kwargs.iteritems():
+        for k,v in kwargs.items():
             setattr(self, k, v)
 
 def read_index(store, path):
     if not store.exists(path):
         now = time.time()
         root = Entry(children={}, nlink=3, size=0,
-                     mode=stat.S_IFDIR | 0755,
+                     mode=stat.S_IFDIR | 0o755,
                      mtime=now, ctime=now)
         write_index(store, path, root)
         log.info('created %s', path)
         return root
     data = store.get(path, format=gpgstore.FMT_GPG)
-    buf = StringIO(data)
-    if buf.read(len(magic)) != magic:
-        raise IOError, 'index parse error: %s' % path
+    buf = BytesIO(data)
+    temp = buf.read(len(magic))
+    if temp != magic:
+        raise IOError('index parse error: %s' % path)
     read_atom(buf)
     root = Entry(**read_dict(buf))
     return root
 
 def write_index(store, path, root):
-    buf = StringIO()
+    buf = BytesIO()
     buf.write(magic)
-    header = ''
+    header = b''
     write_atom(buf, header)
     write_dict(buf, root)
     store.put(buf.getvalue(), path=path, format=gpgstore.FMT_GPG)
@@ -53,36 +54,36 @@ def write_index(store, path, root):
 def write_dict(fd, dct):
     # breadth-first
     children = []
-    buf = StringIO()
+    buf = BytesIO()
     if not isinstance(dct, dict):
         dct = dct.__dict__
     for key in dct:
-        write_atom(buf, key.encode('utf8'))
+        write_atom(buf, key.encode('utf-8'))
         val = dct[key]
         if isinstance(val, dict):
-            buf.write('D')
+            buf.write(b'D')
             children.append(val)
         elif isinstance(val, Entry):
-            buf.write('E')
+            buf.write(b'E')
             children.append(val)
-        elif isinstance(val, (int, long)):
+        elif isinstance(val, (int)):
             if val < 2**32:
-                buf.write('I')
+                buf.write(b'I')
                 buf.write(struct.pack('<I', val))
             else:
-                buf.write('L')
+                buf.write(b'L')
                 buf.write(struct.pack('<Q', val))
         elif isinstance(val, float):
-            buf.write('F')
+            buf.write(b'F')
             buf.write(struct.pack('<d', val))
-        elif isinstance(val, str):
-            buf.write('B')
+        elif isinstance(val, bytes):
+            buf.write(b'')
             write_atom(buf, val)
-        elif isinstance(val, unicode):
-            buf.write('S')
-            write_atom(buf, val.encode('utf8'))
+        elif isinstance(val, str):
+            buf.write(b'S')
+            write_atom(buf, val.encode('utf-8'))
         else:
-            raise TypeError, type(val)
+            raise TypeError(type(val))
     write_atom(fd, buf.getvalue())
     for c in children:
         write_dict(fd, c)
@@ -91,23 +92,23 @@ def read_dict(fd):
     dct = {}
     buf = read_atom(fd)
     buflen = len(buf)
-    buf = StringIO(buf)
+    buf = BytesIO(buf)
     while buf.tell() < buflen:
-        key = read_atom(buf).decode('utf8')
+        key = read_atom(buf).decode('utf-8')
         tag = buf.read(1)
-        if tag == 'D':    val = read_dict(fd)
-        elif tag == 'E':  val = Entry(**read_dict(fd))
-        elif tag == 'I':  val = struct.unpack('<I', buf.read(4))[0]
-        elif tag == 'L':  val = struct.unpack('<Q', buf.read(8))[0]
-        elif tag == 'F':  val = struct.unpack('<d', buf.read(8))[0]
-        elif tag == 'B':  val = read_atom(buf)
-        elif tag == 'S':  val = read_atom(buf).decode('utf8')
-        else:             raise TypeError, tag
+        if tag == b'D':    val = read_dict(fd)
+        elif tag == b'E':  val = Entry(**read_dict(fd))
+        elif tag == b'I':  val = struct.unpack('<I', buf.read(4))[0]
+        elif tag == b'L':  val = struct.unpack('<Q', buf.read(8))[0]
+        elif tag == b'F':  val = struct.unpack('<d', buf.read(8))[0]
+        elif tag == b'':  val = read_atom(buf)
+        elif tag == b'S':  val = read_atom(buf).decode('utf-8')
+        else:             raise TypeError(tag)
         dct[key] = val
     return dct
 
 def write_atom(fd, atom):
-    assert isinstance(atom, str)
+    assert isinstance(atom, bytes)
     fd.write(struct.pack('<I', len(atom)))
     fd.write(atom)
 
@@ -126,7 +127,7 @@ class LoggingMixIn:
         try:
             ret = getattr(self, op)(path, *args)
             return ret
-        except OSError, e:
+        except OSError as e:
             ret = str(e)
             raise
         except:
@@ -207,16 +208,16 @@ class GpgFs(LoggingMixIn, Operations):
 
     def chmod(self, path, mode):
         # sanitize mode (clear setuid/gid/sticky bits)
-        mode &= 0777
+        mode &= 0o777
         with self.transaction():
             ent = self._find(path)
-            ent.mode = mode | (ent.mode & 0170000)
+            ent.mode = mode | (ent.mode & 0o170000)
 
     def chown(self, path, uid, gid):
         raise FuseOSError(errno.ENOSYS)
 
     def create(self, path, mode):
-        mode &= 0777
+        mode &= 0o777
         mode |= stat.S_IFREG
         with self.transaction() as putx:
             parent, name = self._find(path, parent=True)
@@ -237,7 +238,7 @@ class GpgFs(LoggingMixIn, Operations):
             log.debug('nothing to flush')
             return 0
         with self.transaction() as putx:
-            buf = ''.join(self.write_buf)
+            buf = b''.join(self.write_buf)
             self.write_buf = [buf]
             ent = self._find(self.write_path)
             ent.size = len(buf)
@@ -265,7 +266,7 @@ class GpgFs(LoggingMixIn, Operations):
         return []
 
     def mkdir(self, path, mode):
-        mode &= 0777
+        mode &= 0o777
         mode |= stat.S_IFDIR
         with self.transaction():
             parent, name = self._find(path, parent=True)
@@ -349,7 +350,7 @@ class GpgFs(LoggingMixIn, Operations):
         with self.transaction() as putx:
             ent = self._find(path)
             if length == 0:
-                buf = ''
+                buf = b''
             else:
                 buf = self.store.get(ent.encpath, format=ent.encformat)
                 buf = buf[:length]
@@ -389,7 +390,7 @@ class GpgFs(LoggingMixIn, Operations):
             self.write_buf.append(data)
             self.write_len += len(data)
         else:
-            buf = ''.join(self.write_buf)
+            buf = b''.join(self.write_buf)
             buf = buf[:offset] + data + buf[offset + len(data):]
             self.write_buf = [buf]
             self.write_len = len(buf)
