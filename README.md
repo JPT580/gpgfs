@@ -2,14 +2,29 @@
 
 GPG encryption for synchronized folders.
 
+    Usage: gpgfs <gpg_keyid> <encrypted_root> <mountpoint>
+
+
+gpg_keyid: The identity of the gpg key to use. (See gpg -K)
+
+encrypted_root: Path to folder where to store the encrypted data in.
+
+mountpoint: Where to mount the filesystem.
+
 # File structure
 
-    gpgfs/a/b
+This represents the structure GPGFS will use to store the encrypted data on disk.
+
     gpgfs/index
+    gpgfs/a/b
 
 # Dependencies
 
-    pip install python-gnupg fusepy
+GPGFS needs python3 and fuse support to run.
+
+You can install the python dependencies using pip: (using a virtualenv may be helpful)
+
+    pip install -r requirements.txt
 
 # Test suites
 
